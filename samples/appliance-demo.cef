@@ -1,0 +1,2 @@
+CEF:0|Demo Vendor|Demo Firewall|1.0|login_failure|Authentication failed|7|rt=1768471200000 src=203.0.113.42 dst=10.10.0.25 dvchost=demo-fw suser=demo-user msg=authentication failed for demo-user
+CEF:0|Demo Vendor|Demo Firewall|1.0|connection|Connection observed|3|rt=1768471230000 src=10.10.0.25 dst=192.0.2.10 dvchost=demo-fw msg=Synthetic URL query x\=one act=allow

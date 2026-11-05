@@ -1,0 +1,2 @@
+LEEF:2.0|Demo Vendor|Demo Gateway|1.0|authentication|^|devTime=2026-01-15T10:01:00Z^src=203.0.113.42^dst=10.10.0.25^usrName=demo-user^dvchost=demo-gateway^msg=authentication failed^sev=7
+LEEF:2.0|Demo Vendor|Demo Gateway|1.0|connection|0x5E|devTime=2026-01-15T10:01:30Z^src=10.10.0.25^dst=192.0.2.10^msg=Synthetic connection^sev=3

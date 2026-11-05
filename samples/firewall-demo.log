@@ -1,0 +1,1 @@
+date=2026-01-15 time=10:02:00 devname="demo-fw" srcip=10.10.0.25 dstip=192.0.2.10 action=deny msg="Synthetic firewall policy event"

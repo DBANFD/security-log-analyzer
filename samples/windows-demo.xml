@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Events>
+  <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+    <System>
+      <Provider Name="Microsoft-Windows-Security-Auditing" Guid="{54849625-5478-4994-a5ba-3e3b0328c30d}" />
+      <EventID>4625</EventID><Level>0</Level><EventRecordID>1001</EventRecordID>
+      <TimeCreated SystemTime="2026-01-15T10:03:00.0000000Z" />
+      <Execution ProcessID="100" ThreadID="200" /><Channel>Security</Channel><Computer>demo-windows</Computer>
+    </System>
+    <EventData>
+      <Data Name="TargetUserName">demo-user</Data><Data Name="IpAddress">203.0.113.42</Data>
+      <Data Name="LogonType">3</Data><Data Name="Status">0xc000006d</Data>
+    </EventData>
+  </Event>
+  <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+    <System>
+      <Provider Name="Microsoft-Windows-Sysmon" /><EventID>3</EventID><Level>4</Level><EventRecordID>1002</EventRecordID>
+      <TimeCreated SystemTime="2026-01-15T10:03:30Z" /><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>demo-windows</Computer>
+    </System>
+    <EventData>
+      <Data Name="SourceIp">10.10.0.25</Data><Data Name="DestinationIp">192.0.2.10</Data>
+      <Data Name="User">demo-user</Data><Data Name="Image">C:\Demo\synthetic.exe</Data>
+    </EventData>
+  </Event>
+</Events>

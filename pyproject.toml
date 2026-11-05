@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "local-security-log-analyzer"
+version = "0.3.0"
+description = "Offline desktop triage for security log exports"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = []
+
+[project.scripts]
+security-log-analyzer = "security_log_analyzer.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["security_log_analyzer*"]

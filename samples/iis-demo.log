@@ -1,0 +1,7 @@
+#Software: Microsoft Internet Information Services
+#Version: 1.0
+#Fields: date time s-computername c-ip s-ip cs-method cs-uri-stem cs-uri-query cs-username sc-status sc-substatus time-taken cs(User-Agent)
+2026-01-15 10:02:00 demo-web 203.0.113.42 10.10.0.30 GET /login return=%2Fdashboard - 401 0 12 Synthetic+Browser
+2026-01-15 10:02:30 demo-web 203.0.113.43 10.10.0.30 GET /health - - 200 0 2 Synthetic+Monitor
+#Fields: date time c-ip cs-method cs-uri-stem sc-status
+2026-01-15 10:03:00 203.0.113.44 GET /missing 404

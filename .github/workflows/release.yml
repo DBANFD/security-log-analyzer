@@ -1,0 +1,54 @@
+name: Build release downloads
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13.5'
+          architecture: x64
+      - name: Install pinned build tools
+        run: python -m pip install -r requirements-build.txt
+      - name: Generate isolated native fixtures
+        shell: pwsh
+        run: ./tools/generate_windows_demo.ps1 -OutputDirectory work/native-release
+      - name: Run all tests including native files
+        shell: pwsh
+        run: |
+          $env:SLA_NATIVE_FIXTURES = (Resolve-Path work/native-release).Path
+          python -m unittest discover -s tests -v
+      - name: Build desktop and CLI executables
+        run: python -m PyInstaller --noconfirm --clean --distpath work/frozen-dist --workpath work/frozen-build packaging/windows.spec
+      - name: Smoke test the frozen CLI
+        shell: pwsh
+        run: |
+          & ./work/frozen-dist/SecurityLogAnalyzer/security-log-analyzer-cli.exe --version
+          if ($LASTEXITCODE -ne 0) { throw 'Version smoke test failed' }
+          & ./work/frozen-dist/SecurityLogAnalyzer/security-log-analyzer-cli.exe import work/frozen-smoke.sqlite samples/appliance-demo.cef samples/appliance-demo.leef samples/iis-demo.log samples/nested-demo.json work/native-release/synthetic.evtx work/native-release/synthetic.etl
+          if ($LASTEXITCODE -ne 0) { throw 'Import smoke test failed' }
+      - name: Package public files and checksums
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python tools/package_release.py --app-dir work/frozen-dist/SecurityLogAnalyzer --output dist --tag "$env:RELEASE_TAG"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-downloads
+          path: dist/*
+          if-no-files-found: error
+      - name: Create draft release for verification
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create $env:RELEASE_TAG dist/* --draft --verify-tag --title "Security Log Analyzer $env:RELEASE_TAG" --notes-file "docs/RELEASE-NOTES-$env:RELEASE_TAG.md"
