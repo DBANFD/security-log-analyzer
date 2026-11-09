@@ -5,7 +5,7 @@ import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from .core import create_case, validate_case, import_file, summary, query_events, analyze, load_indicators, Cancelled
+from .core import create_case, validate_case, import_file, summary, query_events, analyze, load_indicators, Cancelled, add_annotation, list_annotations, delete_annotation, source_timeline
 from .reports import export_csv, export_report
 from . import __version__
 
@@ -78,8 +78,8 @@ class App:
         tk.Label(outer, textvariable=self.cards, bg=PANEL, fg=TEXT, font=("Segoe UI", 15, "bold"), anchor="w", padx=20, pady=20).pack(fill="x", pady=(0, 16))
         tabs = ttk.Notebook(outer)
         tabs.pack(fill="both", expand=True)
-        overview, events, findings, sources = [ttk.Frame(tabs, padding=12) for _ in range(4)]
-        for page, name in zip((overview, events, findings, sources), ("Overview", "Event explorer", "Findings", "Sources & quality")):
+        overview, events, findings, sources, notes = [ttk.Frame(tabs, padding=12) for _ in range(5)]
+        for page, name in zip((overview, events, findings, sources, notes), ("Overview", "Event explorer", "Findings", "Sources & quality", "Notes")):
             tabs.add(page, text=name)
         self.overview = tk.Text(overview, bg=PANEL, fg=TEXT, font=("Consolas", 11), relief="flat", padx=18, pady=14, wrap="word", state="disabled", height=10)
         self.overview.pack(fill="both", expand=True)
@@ -108,11 +108,20 @@ class App:
         ttk.Label(actions, text="Import order · double-click for full evidence", foreground=MUTED).pack(side="left")
         self.event_tree = self.tree(events, ("id", "timestamp", "host", "src_ip", "dst_ip", "action", "provider", "event_id", "channel", "decode_warning"), (65, 220, 170, 150, 150, 160, 240, 80, 180, 260))
         self.event_tree.bind("<Double-1>", self.evidence)
-        ttk.Label(findings, text="Whole-case rules · fixed 5-minute UTC buckets · double-click to pivot to the IP", foreground=MUTED).pack(anchor="w", pady=(0, 8))
+        ttk.Label(findings, text="Whole-case rules · IP rules use fixed 5-minute UTC buckets · Windows rules match per host · double-click to pivot to evidence", foreground=MUTED).pack(anchor="w", pady=(0, 8))
         self.finding_tree = self.tree(findings, ("rule", "entity", "events", "sources", "reason"), (150, 170, 70, 70, 600))
         self.finding_tree.bind("<Double-1>", lambda event: self.pivot(tabs, events))
         ttk.Label(sources, text="Parse/decode warnings = retained events with incomplete or ambiguous parsing. Inspect event evidence for details.", foreground=MUTED).pack(anchor="w", pady=(0, 8))
         self.source_tree = self.tree(sources, ("id", "name", "records", "rejected", "undated", "assumed", "decode_warnings", "timezone_offset", "syslog_year"), (45, 230, 100, 90, 90, 90, 140, 120, 90))
+        note_actions = ttk.Frame(notes)
+        note_actions.pack(fill="x", pady=(0, 8))
+        for label, callback in (("Refresh notes", self.load_notes), ("Delete selected note", self.remove_note)):
+            button = ttk.Button(note_actions, text=label, command=callback)
+            button.pack(side="left", padx=(0, 8))
+            self.buttons.append(button)
+        ttk.Label(note_actions, text="Add tags and notes from an event's evidence window. Notes are analyst opinions, not source evidence.", foreground=MUTED).pack(side="left")
+        self.notes = []
+        self.note_tree = self.tree(notes, ("event_ref", "timestamp", "host", "src_ip", "event_id", "tag", "note", "created_at"), (80, 200, 160, 140, 80, 140, 420, 180))
         footer = ttk.Frame(outer)
         footer.pack(side="bottom", fill="x", pady=(12, 0), before=tabs)
         self.status = tk.StringVar(value="Ready · Offline workspace")
@@ -234,10 +243,27 @@ class App:
         self.refresh()
 
     def refresh(self):
-        self.work(lambda: (summary(self.case), query_events(self.case, **self.active_filters)), self.render)
+        self.work(lambda: (summary(self.case), query_events(self.case, **self.active_filters), source_timeline(self.case), list_annotations(self.case)), self.render)
+
+    def load_notes(self):
+        if self.require_case():
+            self.work(lambda: list_annotations(self.case), self.show_notes)
+
+    def show_notes(self, rows):
+        self.notes = rows
+        self.fill(self.note_tree, rows)
+
+    def remove_note(self):
+        selected = self.note_tree.selection()
+        if not selected or not self.require_case():
+            return
+        note = self.notes[int(selected[0])]
+        if messagebox.askyesno("Delete note", f"Delete the note on event {note['event_ref']}? The event itself is not changed."):
+            self.work(lambda: (delete_annotation(self.case, note["id"]), list_annotations(self.case))[1], self.show_notes)
 
     def render(self, result):
-        stats, events = result
+        stats, events, timeline, notes = result
+        self.show_notes(notes)
         self.cards.set(f"{stats['events']:,} EVENTS     /     {stats['hosts']:,} HOSTS     /     {len(stats['imports'])} SOURCES     /     {stats['undated'] or 0:,} UNDATED")
         self.fill(self.source_tree, stats["imports"])
         self.show_events(events)
@@ -245,6 +271,13 @@ class App:
         peak = max((r["count"] for r in stats["timeline"]), default=1)
         for row in stats["timeline"]:
             lines.append(f"{row['hour'].replace('T',' ')}:00  {'█' * max(1, round(row['count']/peak*35))} {row['count']:,}")
+        if len(timeline["sources"]) > 1:
+            lines += ["", "ACTIVITY BY SOURCE / same hours, one column per source file"]
+            names = [f"#{s['id']}" for s in timeline["sources"]]
+            lines.append(f"{'UTC hour':<17}" + "".join(f"{n:>10}" for n in names))
+            for hour in timeline["hours"]:
+                lines.append(f"{hour.replace('T',' ')}:00" + "".join(f"{s['counts'].get(hour, 0) or '.':>10}" for s in timeline["sources"]))
+            lines += ["Source numbers match Sources & quality."]
         lines += ["", "TOP IP OBSERVATIONS / source and destination appearances"]
         for row in stats["ips"]:
             lines.append(f"{row['ip']:<40} {row['count']:>8,}   {row['scope']}")
@@ -296,7 +329,7 @@ class App:
                 messagebox.showerror("Invalid indicators", str(exc))
 
     def rule_config(self):
-        return {"failure_threshold": int(self.failure.get()), "fanout_threshold": int(self.fanout.get()), "indicators": [str(n) for n in self.networks]}
+        return {"failure_threshold": int(self.failure.get()), "fanout_threshold": int(self.fanout.get()), "indicators": [str(n) for n in self.networks], "windows_rules": True}
 
     def analyze(self):
         if not self.require_case():
@@ -335,11 +368,37 @@ class App:
         record = self.events[int(selected[0])]
         window = tk.Toplevel(self.root)
         window.title(f"Evidence event {record['id']} | Source {record['import_id']} | Record {record['line']}")
-        window.geometry("900x600")
+        window.geometry("900x650")
+        form = ttk.Frame(window, padding=(12, 10))
+        form.pack(side="bottom", fill="x")
+        tag, note = tk.StringVar(), tk.StringVar()
+        ttk.Label(form, text="Tag").pack(side="left", padx=(0, 5))
+        ttk.Entry(form, textvariable=tag, width=18).pack(side="left", padx=(0, 10))
+        ttk.Label(form, text="Note").pack(side="left", padx=(0, 5))
+        ttk.Entry(form, textvariable=note, width=60).pack(side="left", padx=(0, 10), fill="x", expand=True)
         text = tk.Text(window, bg=PANEL, fg=TEXT, wrap="word", font=("Consolas", 10), padx=18, pady=18)
         text.pack(fill="both", expand=True)
-        text.insert("1.0", json.dumps(record, indent=2, ensure_ascii=False))
-        text.configure(state="disabled")
+        def show(notes):
+            body = json.dumps(record, indent=2, ensure_ascii=False)
+            if notes:
+                body = "ANALYST NOTES\n" + "\n".join(f"[{n['created_at']}] {n['tag'] or '-'}: {n['note']}" for n in notes) + "\n\n" + body
+            text.configure(state="normal")
+            text.delete("1.0", "end")
+            text.insert("1.0", body)
+            text.configure(state="disabled")
+        def save():
+            try:
+                add_annotation(self.case, record["id"], tag.get(), note.get())
+            except Exception as exc:
+                messagebox.showerror("Note not saved", str(exc), parent=window)
+                return
+            tag.set("")
+            note.set("")
+            show(list_annotations(self.case, record["id"]))
+            self.show_notes(list_annotations(self.case))
+            self.status.set(f"Note saved on event {record['id']}")
+        ttk.Button(form, text="Save note", command=save).pack(side="left")
+        show(list_annotations(self.case, record["id"]))
 
     def pivot(self, tabs, events_page):
         selected = self.finding_tree.selection()
@@ -348,8 +407,9 @@ class App:
         finding = self.findings[int(selected[0])]
         if finding["rule"] == "LIMIT":
             return
+        targets = finding.get("pivot") or {"ip": finding["entity"]}
         for key in self.filter_vars:
-            self.filter_vars[key].set(finding["entity"] if key == "ip" else "")
+            self.filter_vars[key].set(targets.get(key, ""))
         tabs.select(events_page)
         self.search()
 

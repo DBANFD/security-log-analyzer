@@ -7,7 +7,7 @@ py -3.13 -m venv work/build-venv
 ./work/build-venv/Scripts/python.exe -m pip install -r requirements-build.txt
 ./work/build-venv/Scripts/python.exe -m PyInstaller --noconfirm --clean --distpath work/frozen-dist --workpath work/frozen-build packaging/windows.spec
 ./work/frozen-dist/SecurityLogAnalyzer/security-log-analyzer-cli.exe --version
-./work/build-venv/Scripts/python.exe tools/package_release.py --app-dir work/frozen-dist/SecurityLogAnalyzer --output dist --tag v0.3.0
+./work/build-venv/Scripts/python.exe tools/package_release.py --app-dir work/frozen-dist/SecurityLogAnalyzer --output dist --tag v0.4.0
 ```
 
 The packager takes source files only from Git's tracked file list. Review `git ls-files` before packaging. It refuses obvious case/native-trace/private paths and adds only approved docs/samples/licenses to the application bundle. Generated case data and local project memory must never be tracked. Runtime files under `_internal` are required and must remain alongside both executables.

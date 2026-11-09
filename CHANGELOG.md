@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 - 2026-11-09
+
+- Windows event rules per host: log cleared (1102/104), new service (7045/4697), member added to a security-enabled group (4728/4732/4756), account created (4720) and scheduled task created (4698). Event ID and exact provider must both match; `--no-windows-rules` disables them.
+- Analyst tags and notes on events: evidence window entry, Notes tab, `note add/list/delete` CLI commands, and a notes section in HTML/JSON reports.
+- Per-source hourly timeline in the overview, reports and new `timeline` command.
+- Double-clicking a Windows finding filters events by its event ID and host.
+- Case schema 3 adds the notes table; 0.1 to 0.3 cases migrate automatically on open.
+
 ## 0.3.0 - 2026-11-05
 
 First GitHub release of Security Log Analyzer.

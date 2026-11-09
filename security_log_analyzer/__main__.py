@@ -1,7 +1,7 @@
 import argparse
 import json
 from . import __version__
-from .core import create_case, validate_case, import_file, analyze, load_indicators, summary
+from .core import create_case, validate_case, import_file, analyze, load_indicators, summary, add_annotation, list_annotations, delete_annotation, source_timeline
 from .reports import export_report, export_csv
 
 
@@ -26,6 +26,16 @@ def main():
     report.add_argument("--indicators")
     report.add_argument("--failure-threshold", type=int, default=5)
     report.add_argument("--fanout-threshold", type=int, default=20)
+    report.add_argument("--no-windows-rules", action="store_true", help="Skip Windows event rules (log cleared, new service, group change, account and task creation)")
+    timeline = commands.add_parser("timeline", help="Per-source hourly event counts for the latest populated UTC hours")
+    timeline.add_argument("case")
+    timeline.add_argument("--hours", type=int, default=48)
+    note = commands.add_parser("note", help="Add, list or delete analyst tags and notes")
+    note.add_argument("action", choices=("add", "list", "delete"))
+    note.add_argument("case")
+    note.add_argument("target", nargs="?", help="Event ID for add/list, annotation ID for delete")
+    note.add_argument("--tag", default="")
+    note.add_argument("--text", default="")
     export = commands.add_parser("export")
     export.add_argument("case")
     export.add_argument("output")
@@ -49,9 +59,21 @@ def main():
                 if not args.output.lower().endswith((".json", ".html")):
                     raise ValueError("Report output must end with .json or .html")
                 networks = load_indicators(args.indicators) if args.indicators else []
-                findings = analyze(args.case, networks, args.failure_threshold, args.fanout_threshold)
-                export_report(args.case, args.output, findings, {"failure_threshold": args.failure_threshold, "fanout_threshold": args.fanout_threshold, "indicators": [str(n) for n in networks]})
+                findings = analyze(args.case, networks, args.failure_threshold, args.fanout_threshold, not args.no_windows_rules)
+                export_report(args.case, args.output, findings, {"failure_threshold": args.failure_threshold, "fanout_threshold": args.fanout_threshold, "indicators": [str(n) for n in networks], "windows_rules": not args.no_windows_rules})
                 print(f"Saved {args.output}; {len(findings)} findings")
+            elif args.command == "timeline":
+                print(json.dumps(source_timeline(args.case, args.hours), indent=2))
+            elif args.command == "note":
+                if args.action == "list":
+                    print(json.dumps(list_annotations(args.case, args.target), indent=2, ensure_ascii=False))
+                elif not args.target:
+                    raise ValueError(f"note {args.action} requires an ID")
+                elif args.action == "add":
+                    print(f"Saved annotation {add_annotation(args.case, args.target, args.tag, args.text)} on event {args.target}")
+                else:
+                    delete_annotation(args.case, args.target)
+                    print(f"Deleted annotation {args.target}")
             elif args.command == "export":
                 count = export_csv(args.case, args.output, **{k: getattr(args, k) for k in ("search", "ip", "start", "end", "event_id", "provider")})
                 print(f"Exported {count:,} events")

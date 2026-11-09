@@ -2,13 +2,13 @@
 
 Investigate security exports locally. Import Windows EVTX/ETL, CEF/LEEF, IIS/W3C, nested JSON, Sentinel and Defender exports, Syslog, and firewall logs into a SQLite case, correlate activity, inspect evidence, and export reports.
 
-This is a native Python/Tk desktop application with a command-line interface. It makes no network requests and has no external runtime packages. Version 0.3.0 adds dedicated CEF/LEEF and IIS/W3C parsing plus streaming nested JSON imports. It is a triage tool, not a replacement for a SIEM or a forensic suite.
+This is a native Python/Tk desktop application with a command-line interface. It makes no network requests and has no external runtime packages. Version 0.4.0 adds Windows event detections, analyst tags and notes, and a per-source timeline. It is a triage tool, not a replacement for a SIEM or a forensic suite.
 
 ![Desktop overview showing synthetic demo data](docs/screenshot.png)
 
 ## Download
 
-[Download Windows x64 portable ZIP](https://github.com/DBANFD/security-log-analyzer/releases/latest/download/Security-Log-Analyzer-v0.3.0-windows-x64.zip) | [All release assets](https://github.com/DBANFD/security-log-analyzer/releases/latest) | [Build status](https://github.com/DBANFD/security-log-analyzer/actions)
+[Download Windows x64 portable ZIP](https://github.com/DBANFD/security-log-analyzer/releases/latest/download/Security-Log-Analyzer-v0.4.0-windows-x64.zip) | [All release assets](https://github.com/DBANFD/security-log-analyzer/releases/latest) | [Build status](https://github.com/DBANFD/security-log-analyzer/actions)
 
 Extract the complete ZIP and run **SecurityLogAnalyzer.exe**. No Python installation is required. Keep the `_internal` folder beside the executables. The bundle also includes `security-log-analyzer-cli.exe`, synthetic samples, and documentation. Downloads are unsigned. Each release includes a source ZIP, a synthetic HTML report, and SHA-256 checksums.
 
@@ -88,8 +88,13 @@ The four new synthetic fixtures produce nine events with no rejected/undated rec
 | `AUTH_BURST` | At least 5 failure-indicator events from one source IP in a fixed 5-minute UTC bucket | Authentication activity worth reviewing; legitimate retries can trigger it |
 | `DEST_FANOUT` | At least 20 distinct destination IPs from one source IP in a fixed 5-minute UTC bucket | Possible scanning or normal service activity |
 | `LOCAL_IOC` | Source or destination IP matches a supplied IP/CIDR | Match against your list, not an independently verified malicious verdict |
+| `LOG_CLEARED` | Event 1102 from `Microsoft-Windows-Security-Auditing` or `Microsoft-Windows-Eventlog`, or 104 from `Microsoft-Windows-Eventlog` | Log clearing; confirm it was authorized |
+| `NEW_SERVICE` | Event 7045 from `Service Control Manager` or 4697 from `Microsoft-Windows-Security-Auditing` | Service installation; review binary path and account |
+| `PRIV_GROUP_CHANGE` | Events 4728, 4732 or 4756 from `Microsoft-Windows-Security-Auditing` | Member added to a security-enabled group; check whether the group is privileged |
+| `ACCOUNT_CREATED` | Event 4720 from `Microsoft-Windows-Security-Auditing` | New user account |
+| `SCHEDULED_TASK` | Event 4698 from `Microsoft-Windows-Security-Auditing` | New scheduled task; review its action |
 
-Thresholds are editable. For generic text/tabular/JSON input, authentication recognition uses specific strings such as `LogonFailed`, `Failed password`, and event ID `4625` in normalized action/message fields. For native Windows/XML events, it requires event ID `4625` from `Microsoft-Windows-Security-Auditing`, because IDs are provider-specific. CEF/LEEF require failure text; their vendor-specific numeric IDs alone do not count. W3C events are excluded from authentication-burst counting. Firewall denies alone do not count. This does not cover every authentication schema or status code.
+Windows rules group matching events per host and need both the event ID and the exact provider, so generic CSV columns named EventId never trigger them. Disable them with `--no-windows-rules`. Double-click a Windows finding to filter events by its event ID and host. Thresholds are editable. For generic text/tabular/JSON input, authentication recognition uses specific strings such as `LogonFailed`, `Failed password`, and event ID `4625` in normalized action/message fields. For native Windows/XML events, it requires event ID `4625` from `Microsoft-Windows-Security-Auditing`, because IDs are provider-specific. CEF/LEEF require failure text; their vendor-specific numeric IDs alone do not count. W3C events are excluded from authentication-burst counting. Firewall denies alone do not count. This does not cover every authentication schema or status code.
 
 Fixed buckets are not sliding windows: activity spanning a boundary can be missed. Undated records remain searchable and participate in IOC matching but are excluded from timed rules. NAT, proxies, and shared addresses can merge unrelated activity. Public/global address scope is not a reputation signal. No findings does not prove the data is clean. Each rule displays at most 1,000 matching groups/addresses and adds a limit notice if truncated.
 
@@ -103,9 +108,13 @@ py -3 -m security_log_analyzer import cases/investigation.sqlite legacy-syslog.l
 py -3 -m security_log_analyzer summary cases/investigation.sqlite
 py -3 -m security_log_analyzer report cases/investigation.sqlite reports/findings.json --failure-threshold 8 --fanout-threshold 30 --indicators local-indicators.txt
 py -3 -m security_log_analyzer export cases/investigation.sqlite reports/filtered.csv --ip 203.0.113.42 --start 2026-01-15T10:00:00Z --end 2026-01-15T10:05:00Z
+py -3 -m security_log_analyzer timeline cases/investigation.sqlite --hours 24
+py -3 -m security_log_analyzer note add cases/investigation.sqlite 1042 --tag review --text "Cleared outside change window"
+py -3 -m security_log_analyzer note list cases/investigation.sqlite
+py -3 -m security_log_analyzer note delete cases/investigation.sqlite 3
 ```
 
-Use a text file containing one IP or CIDR per line for indicators. `#` starts a comment. Up to 10,000 entries are accepted. Indicator lists are loaded locally and must be reloaded when reopening a case. Report configuration includes the list used. Case data and reports are not encrypted by this application; use an appropriate local storage location and access controls.
+Use a text file containing one IP or CIDR per line for indicators. `#` starts a comment. Up to 10,000 entries are accepted. Indicator lists are loaded locally and must be reloaded when reopening a case. Report configuration includes the list used. Tags and notes are analyst opinions stored in the case (limits: 64-character tag, 4,000-character note); they never change source events. Opening a 0.3 case adds the notes table automatically. Case data and reports are not encrypted by this application; use an appropriate local storage location and access controls.
 
 ## Large exports
 
