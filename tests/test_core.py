@@ -5,7 +5,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
-from security_log_analyzer.core import (create_case, import_file, summary, query_events, analyze, load_indicators, parse_time, offset_zone, clean_ip, ip_scope, connect, Cancelled, MAX_RECORD)
+from security_log_analyzer.core import (create_case, import_file, summary, query_events, analyze, load_indicators, parse_time, offset_zone, clean_ip, ip_scope, Cancelled, MAX_RECORD)
 from security_log_analyzer.reports import export_csv, export_report
 
 

@@ -1,14 +1,15 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "local-security-log-analyzer"
-version = "0.4.0"
+version = "0.5.0"
 description = "Offline desktop triage for security log exports"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = []
 
 [project.scripts]
@@ -16,3 +17,27 @@ security-log-analyzer = "security_log_analyzer.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["security_log_analyzer*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 320
+
+[tool.ruff.lint]
+# Correctness rules only: syntax and undefined names, unused code, likely bugs.
+select = ["E4", "E7", "E9", "F", "B"]
+# B905: the CEF/LEEF/W3C parsers rely on zip() stopping at the shorter sequence.
+ignore = ["B905"]
+
+[tool.ruff.lint.per-file-ignores]
+# The packaging tool adds the repository root to sys.path before importing the package.
+"tools/package_release.py" = ["E402"]
+# Test helpers close over loop variables on purpose and assert on any parser failure.
+"tests/test_windows_events.py" = ["B017", "B023"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["security_log_analyzer"]
+check_untyped_defs = true
+# Windows-only subprocess flags are used behind runtime platform checks.
+platform = "win32"
+warn_unused_ignores = true

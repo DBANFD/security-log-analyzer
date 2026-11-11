@@ -11,9 +11,11 @@ import ipaddress
 import json
 import re
 import sqlite3
+from collections import deque
 from contextlib import contextmanager, closing
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from typing import Any
 
 MAX_RECORD = 1024 * 1024
 csv.field_size_limit(MAX_RECORD)
@@ -61,7 +63,7 @@ def create_case(path):
     with connect(path) as db:
         db.executescript("""
         CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT);
-        INSERT OR IGNORE INTO metadata VALUES ('schema_version','3');
+        INSERT OR IGNORE INTO metadata VALUES ('schema_version','4');
         CREATE TABLE IF NOT EXISTS imports (
             id INTEGER PRIMARY KEY, name TEXT NOT NULL, sha256 TEXT UNIQUE NOT NULL,
             imported_at TEXT NOT NULL, records INTEGER DEFAULT 0,
@@ -79,6 +81,8 @@ def create_case(path):
         CREATE INDEX IF NOT EXISTS events_dst ON events(dst_ip, timestamp);
         CREATE INDEX IF NOT EXISTS events_host ON events(host, timestamp);
         """ + ANNOTATIONS_SQL)
+        db.execute("BEGIN")
+        ensure_search_index(db)
 
 
 ANNOTATIONS_SQL = """
@@ -87,6 +91,51 @@ ANNOTATIONS_SQL = """
             tag TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS annotations_event ON annotations(event_ref);
 """
+SEARCH_COLUMNS = ("host", "user", "action", "message", "provider", "channel")
+# Substring index over the searchable columns. It reads its text from the events table
+# (external content), so only the trigram index itself is stored twice.
+# Events are only ever added by import_file, which indexes each file's rows in one
+# statement inside the import transaction, so a rolled-back import leaves no index entries.
+SEARCH_INDEX_SQL = "CREATE VIRTUAL TABLE events_fts USING fts5(" + ", ".join(SEARCH_COLUMNS) + ", content='events', content_rowid='id', tokenize='trigram')"
+SEARCH_INDEX_ROWS = "INSERT INTO events_fts(rowid, " + ", ".join(SEARCH_COLUMNS) + ") SELECT id, " + ", ".join(SEARCH_COLUMNS) + " FROM events WHERE id>?"
+MIN_INDEXED_SEARCH = 3
+
+
+def ensure_search_index(db):
+    """Create the FTS5 trigram index if this SQLite build has it; record the outcome.
+
+    Returns True when the index exists. Without FTS5 or the trigram tokenizer the case
+    still works and search falls back to a table scan.
+    """
+    if has_search_index(db):
+        return True
+    columns = {row[1] for row in db.execute("PRAGMA table_info(events)")}
+    state = "none"
+    if fts5_trigram_available() and columns.issuperset(SEARCH_COLUMNS):
+        db.execute(SEARCH_INDEX_SQL)
+        db.execute(SEARCH_INDEX_ROWS, (0,))
+        state = "fts5-trigram"
+    db.execute("INSERT OR REPLACE INTO metadata VALUES ('search_index',?)", (state,))
+    return state != "none"
+
+
+def fts5_trigram_available():
+    """Probe an in-memory database so the case file is never touched by a failed attempt."""
+    probe = sqlite3.connect(":memory:")
+    try:
+        probe.execute("CREATE VIRTUAL TABLE probe USING fts5(text, tokenize='trigram')")
+        return True
+    except sqlite3.OperationalError:
+        return False
+    finally:
+        probe.close()
+
+
+def has_search_index(db):
+    row = db.execute("SELECT value FROM metadata WHERE key='search_index'").fetchone()
+    return bool(row) and row[0] == "fts5-trigram"
+
+
 MAX_TAG = 64
 MAX_NOTE = 4000
 
@@ -96,10 +145,10 @@ def validate_case(path):
         raise ValueError("Case file does not exist.")
     with connect(path) as db:
         version = db.execute("SELECT value FROM metadata WHERE key='schema_version'").fetchone()
-        if not version or version[0] not in ("1", "2", "3"):
+        if not version or version[0] not in ("1", "2", "3", "4"):
             raise ValueError("Unsupported case schema.")
         db.execute("SELECT import_id, timestamp, raw FROM events LIMIT 0")
-        if version[0] in ("1", "2"):
+        if version[0] != "4":
             # Transactional additive migration; existing records are preserved.
             db.execute("BEGIN")
             if version[0] == "1":
@@ -109,7 +158,9 @@ def validate_case(path):
             for statement in ANNOTATIONS_SQL.split(";"):
                 if statement.strip():
                     db.execute(statement)
-            db.execute("UPDATE metadata SET value='3' WHERE key='schema_version'")
+            # Schema 4 adds the search index; existing events are indexed here, once.
+            ensure_search_index(db)
+            db.execute("UPDATE metadata SET value='4' WHERE key='schema_version'")
 
 
 def offset_zone(offset):
@@ -162,7 +213,7 @@ def ip_scope(value):
 
 def normalize(record, zone):
     fields = {re.sub(r"[ _-]", "", str(k).lower()): v for k, v in record.items()}
-    result = {}
+    result: dict[str, Any] = {}
     for target, aliases in ALIASES.items():
         result[target] = next((str(fields[a]) for a in aliases if fields.get(a) is not None and str(fields[a]).strip()), "")
     if fields.get("date") and fields.get("time"):
@@ -331,7 +382,8 @@ def import_file(case, path, offset="+00:00", year=None, progress=None, cancel=No
             raise ValueError("This exact file is already in the case.")
         import_id = db.execute("INSERT INTO imports(name,sha256,imported_at,timezone_offset,syslog_year) VALUES(?,?,?,?,?)", (path.name, digest.hexdigest(), datetime.now(timezone.utc).isoformat(), offset, year)).lastrowid
         count = rejected = undated = assumed_count = decode_warnings = 0
-        batch = []
+        last_id = db.execute("SELECT coalesce(max(id),0) FROM events").fetchone()[0]
+        batch: list[tuple] = []
         def flush():
             db.executemany("INSERT INTO events(import_id,line,timestamp,host,user,src_ip,dst_ip,action,severity,message,failed,raw,provider,event_id,channel,record_id,decode_warning) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", batch)
             batch.clear()
@@ -357,13 +409,23 @@ def import_file(case, path, offset="+00:00", year=None, progress=None, cancel=No
         check()
         if not count:
             raise ValueError("No valid records found; import rolled back.")
+        if has_search_index(db):
+            if progress:
+                progress(f"{path.name}: indexing {count:,} events for search")
+            db.execute(SEARCH_INDEX_ROWS, (last_id,))
+            check()
         db.execute("UPDATE imports SET records=?,rejected=?,undated=?,assumed=?,decode_warnings=? WHERE id=?", (count, rejected, undated, assumed_count, decode_warnings, import_id))
     return {"records": count, "rejected": rejected, "undated": undated, "assumed": assumed_count, "decode_warnings": decode_warnings}
 
 
-def filters(search="", ip="", start="", end="", event_id="", provider=""):
+def filters(search="", ip="", start="", end="", event_id="", provider="", indexed=False):
+    """WHERE clause and arguments. `indexed` says the case has the FTS5 search index."""
     parts, args = [], []
-    if search:
+    if search and indexed and len(search) >= MIN_INDEXED_SEARCH:
+        # A quoted trigram phrase is a case-insensitive substring match, like the scan below.
+        parts.append("id IN (SELECT rowid FROM events_fts WHERE events_fts MATCH ?)")
+        args.append('"' + search.replace('"', '""') + '"')
+    elif search:
         parts.append("(host LIKE ? ESCAPE '\\' OR user LIKE ? ESCAPE '\\' OR action LIKE ? ESCAPE '\\' OR message LIKE ? ESCAPE '\\' OR provider LIKE ? ESCAPE '\\' OR channel LIKE ? ESCAPE '\\')")
         pattern = "%" + search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         args += [pattern] * 6
@@ -392,9 +454,9 @@ def filters(search="", ip="", start="", end="", event_id="", provider=""):
 
 
 def query_events(case, limit=500, after=0, **kwargs):
-    where, args = filters(**kwargs)
-    where += (" AND " if where else " WHERE ") + "id>?"
     with connect(case) as db:
+        where, args = filters(**kwargs, indexed=has_search_index(db))
+        where += (" AND " if where else " WHERE ") + "id>?"
         return [dict(r) for r in db.execute("SELECT * FROM events" + where + " ORDER BY id LIMIT ?", [*args, after, min(max(limit, 1), 5000)])]
 
 
@@ -437,9 +499,58 @@ WINDOWS_RULES = (
 )
 
 
-def windows_findings(db):
+MAX_CUSTOM_RULES = 200
+CUSTOM_RULES_FILE = "windows-rules.json"
+
+
+def custom_rules_path():
+    """windows-rules.json beside the executable (packaged app) or beside the package (source run)."""
+    import sys
+    base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent.parent
+    return base / CUSTOM_RULES_FILE
+
+
+def load_rules(path):
+    """Read extra Windows event rules from JSON. The file is data: nothing in it is evaluated.
+
+    Format: a list of objects with rule (A-Z, 0-9, underscore), event_ids (list of numeric
+    strings), providers (list of provider names, matched exactly, case-insensitive) and reason.
+    """
+    try:
+        with open(path, encoding="utf-8-sig") as source:
+            data = json.load(source)
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Rule file could not be read: {exc}") from exc
+    if not isinstance(data, list) or len(data) > MAX_CUSTOM_RULES:
+        raise ValueError(f"Rule file must be a JSON list of at most {MAX_CUSTOM_RULES} rules.")
+    rules = []
+    for n, item in enumerate(data, 1):
+        if not isinstance(item, dict):
+            raise ValueError(f"Rule {n} must be an object.")
+        name, event_ids, providers, reason = (item.get(k) for k in ("rule", "event_ids", "providers", "reason"))
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]{0,39}", name):
+            raise ValueError(f"Rule {n}: 'rule' must be 1 to 40 characters of A-Z, 0-9 and underscore, starting with a letter.")
+        if name in ("AUTH_BURST", "DEST_FANOUT", "LOCAL_IOC", "LIMIT"):
+            raise ValueError(f"Rule {n}: '{name}' is reserved.")
+        if not isinstance(event_ids, list) or not 1 <= len(event_ids) <= 50 or not all(isinstance(e, str) and re.fullmatch(r"\d{1,10}", e) for e in event_ids):
+            raise ValueError(f"Rule {n}: 'event_ids' must be a list of 1 to 50 numeric strings.")
+        if not isinstance(providers, list) or not 1 <= len(providers) <= 20 or not all(isinstance(v, str) and 0 < len(v.strip()) <= 200 for v in providers):
+            raise ValueError(f"Rule {n}: 'providers' must be a list of 1 to 20 provider names.")
+        if not isinstance(reason, str) or not 0 < len(reason.strip()) <= 500:
+            raise ValueError(f"Rule {n}: 'reason' must be 1 to 500 characters.")
+        rules.append((name, tuple(event_ids), tuple(v.strip().lower() for v in providers), reason.strip()))
+    return rules
+
+
+def load_custom_rules():
+    """Rules from the optional windows-rules.json; an empty list when the file is absent."""
+    path = custom_rules_path()
+    return load_rules(path) if path.is_file() else []
+
+
+def windows_findings(db, rules=WINDOWS_RULES):
     findings = []
-    for rule, event_ids, providers, reason in WINDOWS_RULES:
+    for rule, event_ids, providers, reason in rules:
         marks = ",".join("?" * len(event_ids))
         pmarks = ",".join("?" * len(providers))
         sql = (f"SELECT coalesce(nullif(host,''),'(unknown host)') entity, min(timestamp) first, max(timestamp) last, count(*) events, "
@@ -450,23 +561,68 @@ def windows_findings(db):
     return findings
 
 
-def analyze(case, indicators=(), failure_threshold=5, fanout_threshold=20, windows_rules=True):
-    """Whole-case, UTC fixed five-minute buckets; not sliding windows. Windows rules are per-host event matches."""
+WINDOW_SECONDS = 300
+
+
+def sliding_findings(db, rule, condition, distinct_dst, threshold, label, check=lambda: None):
+    """Peak activity per source IP in any 5-minute window that ends at one of its events.
+
+    Rows arrive ordered by source and time (index events_src), so memory holds one
+    window at a time. One finding per source: its busiest window at or above threshold.
+    """
+    findings: list[dict] = []
+    window: deque[tuple] = deque()  # (epoch, id, timestamp, dst_ip, import_id)
+    destinations: dict[str, int] = {}
+    current = None
+    best = None
+    qualifying = 0
+
+    def close():
+        if best:
+            findings.append(best | {"rule": rule, "entity": current, "reason": f"{best['metric']} {label} within 5 minutes (sliding window, threshold {threshold}); {qualifying:,} events fell in a window at or above the threshold."})
+
+    sql = ("SELECT id, src_ip, CAST(strftime('%s',timestamp) AS INTEGER) epoch, timestamp, dst_ip, import_id FROM events "
+           f"WHERE src_ip!='' AND timestamp IS NOT NULL AND {condition} ORDER BY src_ip, timestamp, id")
+    for n, row in enumerate(db.execute(sql)):
+        if n % 50000 == 0:
+            check()
+        if row["epoch"] is None:
+            continue
+        if row["src_ip"] != current:
+            close()
+            current, best, qualifying = row["src_ip"], None, 0
+            window.clear()
+            destinations.clear()
+        window.append((row["epoch"], row["id"], row["timestamp"], row["dst_ip"], row["import_id"]))
+        if distinct_dst:
+            destinations[row["dst_ip"]] = destinations.get(row["dst_ip"], 0) + 1
+        while row["epoch"] - window[0][0] >= WINDOW_SECONDS:
+            old = window.popleft()
+            if distinct_dst:
+                destinations[old[3]] -= 1
+                if not destinations[old[3]]:
+                    del destinations[old[3]]
+        metric = len(destinations) if distinct_dst else len(window)
+        if metric >= threshold:
+            qualifying += 1
+            if not best or metric > best["metric"]:
+                best = {"first": window[0][2], "last": row["timestamp"], "events": len(window), "metric": metric,
+                        "evidence_id": window[0][1], "sources": len({item[4] for item in window})}
+    close()
+    findings.sort(key=lambda f: (-f["metric"], f["entity"]))
+    if len(findings) > 1000:
+        findings[1000:] = [{"rule": "LIMIT", "entity": rule, "reason": "More than 1,000 source IPs matched; only the top 1,000 are shown."}]
+    return findings
+
+
+def analyze(case, indicators=(), failure_threshold=5, fanout_threshold=20, windows_rules=True, custom_rules=()):
+    """Whole-case rules. IP rules use 5-minute sliding windows in UTC; Windows rules are per-host event matches."""
     if failure_threshold < 2 or fanout_threshold < 2:
         raise ValueError("Thresholds must be at least two.")
     findings = []
-    bucket = "CAST(strftime('%s',timestamp) AS INTEGER)/300"
     with connect(case) as db:
-        for rule, condition, metric, threshold, label in (
-            ("AUTH_BURST", "failed=1 AND src_ip!=''", "count(*)", failure_threshold, "authentication failure indicators"),
-            ("DEST_FANOUT", "src_ip!='' AND dst_ip!=''", "count(DISTINCT dst_ip)", fanout_threshold, "distinct destination IPs"),
-        ):
-            sql = f"SELECT src_ip entity, min(timestamp) first, max(timestamp) last, count(*) events, {metric} metric, min(id) evidence_id, count(DISTINCT import_id) sources FROM events WHERE timestamp IS NOT NULL AND {condition} GROUP BY src_ip,{bucket} HAVING {metric}>=? ORDER BY metric DESC LIMIT 1001"
-            rows = db.execute(sql, (threshold,)).fetchall()
-            for row in rows[:1000]:
-                findings.append(dict(row) | {"rule": rule, "reason": f"{row['metric']} {label} in a fixed 5-minute UTC bucket (threshold {threshold})."})
-            if len(rows) > 1000:
-                findings.append({"rule": "LIMIT", "entity": rule, "reason": "More than 1,000 groups matched; only the top 1,000 are shown."})
+        findings.extend(sliding_findings(db, "AUTH_BURST", "failed=1", False, failure_threshold, "authentication failure indicators"))
+        findings.extend(sliding_findings(db, "DEST_FANOUT", "dst_ip!=''", True, fanout_threshold, "distinct destination IPs"))
         if indicators:
             # Iterate distinct addresses without loading all events into RAM.
             hits = 0
@@ -481,6 +637,8 @@ def analyze(case, indicators=(), failure_threshold=5, fanout_threshold=20, windo
                     findings.append(dict(detail) | {"rule": "LOCAL_IOC", "entity": str(addr), "metric": detail["events"], "reason": "Address matches the user-supplied local IP/CIDR list. List quality and relevance require validation."})
         if windows_rules:
             findings.extend(windows_findings(db))
+        if custom_rules:
+            findings.extend(windows_findings(db, custom_rules))
     return findings
 
 
@@ -500,7 +658,7 @@ def add_annotation(case, event_ref, tag="", note=""):
 def list_annotations(case, event_ref=None):
     sql = ("SELECT a.id, a.event_ref, a.tag, a.note, a.created_at, e.timestamp, e.host, e.src_ip, e.dst_ip, e.action, e.event_id, e.import_id "
            "FROM annotations a JOIN events e ON e.id=a.event_ref")
-    args = ()
+    args: tuple = ()
     if event_ref is not None:
         sql += " WHERE a.event_ref=?"
         args = (int(event_ref),)
@@ -522,7 +680,7 @@ def source_timeline(case, hours=48):
             return {"hours": [], "sources": []}
         rows = db.execute("SELECT i.id, i.name, substr(e.timestamp,1,13) hour, count(*) count FROM events e JOIN imports i ON i.id=e.import_id "
                           "WHERE e.timestamp IS NOT NULL AND substr(e.timestamp,1,13)>=? GROUP BY i.id, hour", (latest[0],)).fetchall()
-    sources = {}
+    sources: dict = {}
     for row in rows:
         entry = sources.setdefault(row["id"], {"id": row["id"], "name": row["name"], "counts": {}})
         entry["counts"][row["hour"]] = row["count"]

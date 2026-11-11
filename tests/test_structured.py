@@ -8,7 +8,7 @@ from pathlib import Path
 
 from security_log_analyzer.core import create_case, import_file, query_events, summary, analyze, Cancelled
 from security_log_analyzer.json_stream import json_records, nested_record, MAX_EVENT
-from security_log_analyzer.structured_logs import parse_cef, parse_leef, W3CParser
+from security_log_analyzer.structured_logs import parse_cef, parse_leef
 
 
 class StructuredTests(unittest.TestCase):

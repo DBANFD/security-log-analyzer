@@ -15,4 +15,4 @@ else:
     except Exception as exc:
         import ctypes
         ctypes.windll.user32.MessageBoxW(None, str(exc), 'Security Log Analyzer could not start', 0x10)
-        raise SystemExit(1)
+        raise SystemExit(1) from exc

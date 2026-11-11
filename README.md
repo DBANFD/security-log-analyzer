@@ -2,13 +2,13 @@
 
 Investigate security exports locally. Import Windows EVTX/ETL, CEF/LEEF, IIS/W3C, nested JSON, Sentinel and Defender exports, Syslog, and firewall logs into a SQLite case, correlate activity, inspect evidence, and export reports.
 
-This is a native Python/Tk desktop application with a command-line interface. It makes no network requests and has no external runtime packages. Version 0.4.0 adds Windows event detections, analyst tags and notes, and a per-source timeline. It is a triage tool, not a replacement for a SIEM or a forensic suite.
+This is a native Python/Tk desktop application with a command-line interface. It makes no network requests and has no external runtime packages. Version 0.5.0 adds indexed search, sliding-window rules and custom Windows event rules from a JSON file. It is a triage tool, not a replacement for a SIEM or a forensic suite.
 
 ![Desktop overview showing synthetic demo data](docs/screenshot.png)
 
 ## Download
 
-[Download Windows x64 portable ZIP](https://github.com/DBANFD/security-log-analyzer/releases/latest/download/Security-Log-Analyzer-v0.4.0-windows-x64.zip) | [All release assets](https://github.com/DBANFD/security-log-analyzer/releases/latest) | [Build status](https://github.com/DBANFD/security-log-analyzer/actions)
+[Download Windows x64 portable ZIP](https://github.com/DBANFD/security-log-analyzer/releases/latest/download/Security-Log-Analyzer-v0.5.0-windows-x64.zip) | [All release assets](https://github.com/DBANFD/security-log-analyzer/releases/latest) | [Build status](https://github.com/DBANFD/security-log-analyzer/actions)
 
 Extract the complete ZIP and run **SecurityLogAnalyzer.exe**. No Python installation is required. Keep the `_internal` folder beside the executables. The bundle also includes `security-log-analyzer-cli.exe`, synthetic samples, and documentation. Downloads are unsigned. Each release includes a source ZIP, a synthetic HTML report, and SHA-256 checksums.
 
@@ -57,7 +57,8 @@ Create the `reports` directory first. Reports can be opened offline; HTML report
 - Field normalization for common Sentinel/Defender columns, ISO 8601 and Unix epoch timestamps, IPv4 and IPv6.
 - Hourly activity overview, top IP observations, text/IP/time filtering, and full retained record inspection.
 - Authentication bursts, destination fan-out, and user-provided local IP/CIDR indicator matches.
-- Cross-file correlation by source IP and five-minute UTC bucket, with source count and evidence event ID.
+- Cross-file correlation by source IP in five-minute sliding windows, with source count and evidence event ID.
+- Free-text search backed by a SQLite FTS5 trigram index, with a table-scan fallback.
 - SHA-256 source fingerprints, duplicate-file blocking, import quality statistics, and per-file rollback on cancellation or fatal parse errors.
 - Escaped HTML reports, structured JSON reports, and CSV exports with formula-leading values neutralized.
 
@@ -85,8 +86,8 @@ The four new synthetic fixtures produce nine events with no rejected/undated rec
 
 | Rule | Default trigger | Meaning |
 | --- | --- | --- |
-| `AUTH_BURST` | At least 5 failure-indicator events from one source IP in a fixed 5-minute UTC bucket | Authentication activity worth reviewing; legitimate retries can trigger it |
-| `DEST_FANOUT` | At least 20 distinct destination IPs from one source IP in a fixed 5-minute UTC bucket | Possible scanning or normal service activity |
+| `AUTH_BURST` | At least 5 failure-indicator events from one source IP within any 5 minutes | Authentication activity worth reviewing; legitimate retries can trigger it |
+| `DEST_FANOUT` | At least 20 distinct destination IPs from one source IP within any 5 minutes | Possible scanning or normal service activity |
 | `LOCAL_IOC` | Source or destination IP matches a supplied IP/CIDR | Match against your list, not an independently verified malicious verdict |
 | `LOG_CLEARED` | Event 1102 from `Microsoft-Windows-Security-Auditing` or `Microsoft-Windows-Eventlog`, or 104 from `Microsoft-Windows-Eventlog` | Log clearing; confirm it was authorized |
 | `NEW_SERVICE` | Event 7045 from `Service Control Manager` or 4697 from `Microsoft-Windows-Security-Auditing` | Service installation; review binary path and account |
@@ -96,7 +97,17 @@ The four new synthetic fixtures produce nine events with no rejected/undated rec
 
 Windows rules group matching events per host and need both the event ID and the exact provider, so generic CSV columns named EventId never trigger them. Disable them with `--no-windows-rules`. Double-click a Windows finding to filter events by its event ID and host. Thresholds are editable. For generic text/tabular/JSON input, authentication recognition uses specific strings such as `LogonFailed`, `Failed password`, and event ID `4625` in normalized action/message fields. For native Windows/XML events, it requires event ID `4625` from `Microsoft-Windows-Security-Auditing`, because IDs are provider-specific. CEF/LEEF require failure text; their vendor-specific numeric IDs alone do not count. W3C events are excluded from authentication-burst counting. Firewall denies alone do not count. This does not cover every authentication schema or status code.
 
-Fixed buckets are not sliding windows: activity spanning a boundary can be missed. Undated records remain searchable and participate in IOC matching but are excluded from timed rules. NAT, proxies, and shared addresses can merge unrelated activity. Public/global address scope is not a reputation signal. No findings does not prove the data is clean. Each rule displays at most 1,000 matching groups/addresses and adds a limit notice if truncated.
+The two IP rules use sliding windows: a window ends at each event and covers the 5 minutes before it (300 seconds, exclusive), so a burst is found wherever it falls on the clock. Each source IP gets one finding, for its busiest window; the reason text says how many of its events fell in a window at or above the threshold. Version 0.4 and earlier used fixed UTC buckets and listed one finding per bucket, so counts and the number of findings can differ for the same case.
+
+### Custom Windows event rules
+
+Add your own per-host Windows event rules without rebuilding. Copy `samples/windows-rules.example.json` to `windows-rules.json` beside `SecurityLogAnalyzer.exe` (or beside the `security_log_analyzer` folder when running from source); the desktop app and `report` load it automatically. The CLI also takes `report --rules path.json`. Each rule needs `rule` (A-Z, 0-9, underscore), `event_ids` (numeric strings), `providers` (exact provider names, case-insensitive) and `reason`. The file is data only: nothing in it is evaluated, an invalid file is refused with the rule number, and built-in rules always run unless `--no-windows-rules` is given, which also skips the custom ones. Up to 200 rules.
+
+### Search
+
+Free-text search over host, user, action, message, provider and channel uses a SQLite FTS5 trigram index for terms of three characters or more, and matches the same case-insensitive substrings as before. Shorter terms, and SQLite builds without the trigram tokenizer, use the earlier table scan. In a 300,000-event synthetic case a no-match search took about 1 ms with the index and 130 ms without; the index made the case file about 45 percent larger and the import about 25 percent slower.
+
+Undated records remain searchable and participate in IOC matching but are excluded from timed rules. NAT, proxies, and shared addresses can merge unrelated activity. Public/global address scope is not a reputation signal. No findings does not prove the data is clean. Each rule displays at most 1,000 matching groups/addresses and adds a limit notice if truncated.
 
 Reports cover the whole case. Event-view filters apply only to event browsing and CSV export. CSV export uses the last **applied** filters and includes all matching events, not just the current page. Timestamp bounds are inclusive; a date alone means midnight at the beginning of that date. All time filters without offsets are UTC. The hourly overview shows the latest 48 populated hours, not necessarily 48 consecutive hours.
 
@@ -120,7 +131,7 @@ Use a text file containing one IP or CIDR per line for indicators. `#` starts a 
 
 EVTX/ETL import requires Windows, Windows PowerShell, and (for ETL) `tracerpt.exe`. Readable input files normally do not require elevation. The app neither elevates nor changes logging channels, running traces, execution policy, or provider registrations. Missing provider message resources are reported as decode warnings; retained metadata and available payloads remain searchable. All ETL events carry a best-effort warning because conversion cannot guarantee complete provider decoding. WPP/TMF/PDB-based traces, packet traces, and proprietary provider formats may expose only partial data. No symbol downloads or automatic provider installation are performed. See [docs/WINDOWS-EVENTS.md](docs/WINDOWS-EVENTS.md).
 
-Existing v0.1 cases are upgraded transactionally to schema 2 when opened. Events and source records are preserved; new metadata columns are blank for old imports. Keep a backup before moving between application versions. Version 0.1 cannot read upgraded cases.
+Cases from 0.1 to 0.4 are upgraded transactionally to schema 4 when opened; the first open builds the search index, which can take a while on a large case. Events and source records are preserved; new metadata columns are blank for old imports. Keep a backup before moving between application versions. Earlier versions cannot read upgraded cases.
 
 Imports do not load a whole file into memory. Data is inserted in batches inside a single per-file transaction. Memory and disk requirements depend on record size, index size, and group cardinality. Allow several times the input size for raw-record storage, indexes, rollback journals, and temporary SQL sorting. Gzip is fingerprinted as compressed bytes and parsed as a stream. Fingerprinting adds one full sequential read before ingestion.
 

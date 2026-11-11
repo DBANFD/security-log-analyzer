@@ -41,7 +41,8 @@ def nested_record(original, path="$"):
     if original.get("windows_event") is True:
         return original
     base = original.get("_source") if isinstance(original.get("_source"), dict) else original
-    flat, leaves = {}, {}
+    flat: dict = {}
+    leaves: dict = {}
     def flatten(value, parts=()):
         if len(parts) > MAX_DEPTH:
             raise ValueError("JSON nesting exceeds 64 levels")
@@ -135,7 +136,9 @@ class JSONStream:
         first = self.peek()
         if not first:
             raise ValueError("Unexpected end of JSON")
-        output, stack, quoted, escaped = [], [], False, False
+        output: list[str] = []
+        stack: list[str] = []
+        quoted = escaped = False
         container = first in "[{"
         string = first == '"'
         while self.peek():

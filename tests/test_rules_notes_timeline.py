@@ -89,7 +89,7 @@ class WindowsRuleAndNoteTests(unittest.TestCase):
             db.execute("UPDATE metadata SET value='2' WHERE key='schema_version'")
         validate_case(self.case)
         with connect(self.case) as db:
-            self.assertEqual(db.execute("SELECT value FROM metadata WHERE key='schema_version'").fetchone()[0], "3")
+            self.assertEqual(db.execute("SELECT value FROM metadata WHERE key='schema_version'").fetchone()[0], "4")
             self.assertEqual(db.execute("SELECT count(*) FROM events").fetchone()[0], 1)
         add_annotation(self.case, query_events(self.case)[0]["id"], "migrated")
         validate_case(self.case)  # Idempotent on schema 3.

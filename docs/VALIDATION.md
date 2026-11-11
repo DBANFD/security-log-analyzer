@@ -39,7 +39,7 @@ Checked on Windows on 2026-11-05. All test data was synthetic. No tenant or cust
 ## Automated checks
 
 - 18 tests passed on Python 3.11, 3.13, and 3.14.
-- Coverage includes CSV multiline parsing, Sentinel/Defender aliases, Syslog with/without an assigned year, key-value firewall logs, JSONL rejection, UTF-8 failure rollback, gzip, timestamp normalization, source deduplication, mid-import cancellation, fixed-window cross-source correlation, destination fan-out, IP/CIDR matching, pagination/filter injection, and safe report/CSV escaping.
+- Coverage includes CSV multiline parsing, Sentinel/Defender aliases, Syslog with/without an assigned year, key-value firewall logs, JSONL rejection, UTF-8 failure rollback, gzip, timestamp normalization, source deduplication, mid-import cancellation, sliding-window cross-source correlation, destination fan-out, IP/CIDR matching, pagination/filter injection, and safe report/CSV escaping.
 - CLI demo imported 212 events from four files with zero rejected/undated records. One firewall timestamp used the explicit UTC assumption.
 - Demo report with the local synthetic indicator list produced four findings: AUTH_BURST, DEST_FANOUT, and two LOCAL_IOC matches.
 - Database connections are explicitly closed, including on errors and cancellation. This was verified through Windows temporary-case cleanup in tests.

@@ -1,0 +1,14 @@
+[
+  {
+    "rule": "ACCOUNT_LOCKOUT",
+    "event_ids": ["4740"],
+    "providers": ["Microsoft-Windows-Security-Auditing"],
+    "reason": "A user account was locked out. Repeated lockouts can follow password guessing or a stale saved credential."
+  },
+  {
+    "rule": "DEFENDER_PROTECTION_DISABLED",
+    "event_ids": ["5001", "5010", "5012"],
+    "providers": ["Microsoft-Windows-Windows Defender"],
+    "reason": "Microsoft Defender Antivirus real-time protection or scanning was turned off. Confirm it was an approved change."
+  }
+]

@@ -15,7 +15,9 @@ def unescape(value, header=False):
 
 
 def split_header(text, count):
-    parts, current, escaped = [], [], False
+    parts: list[str] = []
+    current: list[str] = []
+    escaped = False
     for index, char in enumerate(text):
         if char == "|" and not escaped:
             parts.append(unescape("".join(current), True))
@@ -105,7 +107,8 @@ def parse_cef(line, inherited=None):
     if parts[0] not in ("CEF:0", "CEF:1"):
         raise ValueError("Only CEF versions 0 and 1 are supported")
     header = dict(zip(("version", "vendor", "product", "product_version", "event_id", "name", "severity"), parts))
-    fields, warnings = {}, []
+    fields: dict = {}
+    warnings: list[str] = []
     matches = list(re.finditer(r"(?:^|[ \t]+)([A-Za-z][A-Za-z0-9_.-]*)=", extension))
     if extension.strip() and (not matches or extension[:matches[0].start()].strip()):
         warnings.append("Unparsed CEF extension text")
@@ -129,7 +132,8 @@ def parse_leef(line, inherited=None):
         delimiter = chr(int(delimiter.lower().split("x", 1)[1], 16))
     if len(delimiter) != 1 or delimiter in ("=", "\r", "\n", "\x00"):
         raise ValueError("LEEF 2.0 requires a single valid delimiter or hex character code")
-    fields, warnings = {}, []
+    fields: dict = {}
+    warnings: list[str] = []
     for item in extension.split(delimiter):
         if not item:
             continue

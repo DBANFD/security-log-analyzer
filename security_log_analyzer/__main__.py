@@ -1,7 +1,7 @@
 import argparse
 import json
 from . import __version__
-from .core import create_case, validate_case, import_file, analyze, load_indicators, summary, add_annotation, list_annotations, delete_annotation, source_timeline
+from .core import create_case, validate_case, import_file, analyze, load_indicators, load_rules, load_custom_rules, summary, add_annotation, list_annotations, delete_annotation, source_timeline
 from .reports import export_report, export_csv
 
 
@@ -27,6 +27,7 @@ def main():
     report.add_argument("--failure-threshold", type=int, default=5)
     report.add_argument("--fanout-threshold", type=int, default=20)
     report.add_argument("--no-windows-rules", action="store_true", help="Skip Windows event rules (log cleared, new service, group change, account and task creation)")
+    report.add_argument("--rules", help="JSON file with extra Windows event rules. Default: windows-rules.json beside the application, if present")
     timeline = commands.add_parser("timeline", help="Per-source hourly event counts for the latest populated UTC hours")
     timeline.add_argument("case")
     timeline.add_argument("--hours", type=int, default=48)
@@ -59,8 +60,9 @@ def main():
                 if not args.output.lower().endswith((".json", ".html")):
                     raise ValueError("Report output must end with .json or .html")
                 networks = load_indicators(args.indicators) if args.indicators else []
-                findings = analyze(args.case, networks, args.failure_threshold, args.fanout_threshold, not args.no_windows_rules)
-                export_report(args.case, args.output, findings, {"failure_threshold": args.failure_threshold, "fanout_threshold": args.fanout_threshold, "indicators": [str(n) for n in networks], "windows_rules": not args.no_windows_rules})
+                custom = [] if args.no_windows_rules else load_rules(args.rules) if args.rules else load_custom_rules()
+                findings = analyze(args.case, networks, args.failure_threshold, args.fanout_threshold, not args.no_windows_rules, custom)
+                export_report(args.case, args.output, findings, {"failure_threshold": args.failure_threshold, "fanout_threshold": args.fanout_threshold, "indicators": [str(n) for n in networks], "windows_rules": not args.no_windows_rules, "custom_rules": [rule[0] for rule in custom]})
                 print(f"Saved {args.output}; {len(findings)} findings")
             elif args.command == "timeline":
                 print(json.dumps(source_timeline(args.case, args.hours), indent=2))

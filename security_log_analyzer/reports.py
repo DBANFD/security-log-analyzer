@@ -4,7 +4,7 @@ import html
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from .core import connect, filters, summary, list_annotations, source_timeline
+from .core import connect, filters, has_search_index, summary, list_annotations, source_timeline
 
 LIMITS = (
     "Triage indicators are not proof of compromise. Public IP addresses are not inherently suspicious. "
@@ -25,10 +25,10 @@ def check_output(case, path):
 
 def export_csv(case, path, **kwargs):
     check_output(case, path)
-    where, args = filters(**kwargs)
     columns = ["id", "import_id", "line", "timestamp", "host", "user", "src_ip", "dst_ip", "action", "severity", "message", "provider", "event_id", "channel", "record_id", "decode_warning"]
     count = 0
     with connect(case) as db, open(path, "w", encoding="utf-8-sig", newline="") as output:
+        where, args = filters(**kwargs, indexed=has_search_index(db))
         writer = csv.writer(output)
         writer.writerow(columns)
         for row in db.execute("SELECT " + ",".join(columns) + " FROM events" + where + " ORDER BY id", args):

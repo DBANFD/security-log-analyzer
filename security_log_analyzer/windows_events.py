@@ -143,10 +143,12 @@ def windows_records(path, check=lambda: None):
     env = os.environ.copy()
     env["SLA_EVENT_PATH"] = str(Path(path).resolve())
     command = [str(executable), "-NoLogo", "-NoProfile", "-NonInteractive", "-OutputFormat", "Text", "-EncodedCommand", base64.b64encode(DECODER.encode("utf-16-le")).decode("ascii")]
-    messages = queue.Queue(maxsize=8)
+    messages: queue.Queue = queue.Queue(maxsize=8)
     stop = threading.Event()
     with tempfile.TemporaryFile() as errors:
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors, env=env, creationflags=subprocess.CREATE_NO_WINDOW)
+        stdout = process.stdout
+        assert stdout is not None  # stdout=PIPE above
         def send(item):
             while not stop.is_set():
                 try:
@@ -157,12 +159,12 @@ def windows_records(path, check=lambda: None):
         def read():
             try:
                 while True:
-                    line = process.stdout.readline(8 * 1024 * 1024 + 1)
+                    line = stdout.readline(8 * 1024 * 1024 + 1)
                     if not line:
                         break
                     if len(line) > 8 * 1024 * 1024:
                         while line and not line.endswith(b"\n"):
-                            line = process.stdout.readline(65536)
+                            line = stdout.readline(65536)
                         send(("oversize", None))
                     else:
                         send(("line", line))
@@ -214,7 +216,7 @@ def windows_records(path, check=lambda: None):
                     process.kill()
                     process.wait(timeout=5)
             worker.join(timeout=5)
-            process.stdout.close()
+            stdout.close()
 
 
 def etl_records(path, check=lambda: None):
@@ -270,7 +272,7 @@ def xml_records(stream, check=lambda: None):
     root = None
     n = 0
     depth = 0
-    for event, element in ET.iterparse(SafeReader(), events=("start", "end")):
+    for event, element in ET.iterparse(SafeReader(), events=("start", "end")):  # type: ignore[call-overload]
         if event == "start":
             depth += 1
         if root is None:

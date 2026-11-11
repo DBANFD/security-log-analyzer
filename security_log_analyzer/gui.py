@@ -5,7 +5,7 @@ import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from .core import create_case, validate_case, import_file, summary, query_events, analyze, load_indicators, Cancelled, add_annotation, list_annotations, delete_annotation, source_timeline
+from .core import create_case, validate_case, import_file, summary, query_events, analyze, load_indicators, load_custom_rules, add_annotation, list_annotations, delete_annotation, source_timeline
 from .reports import export_csv, export_report
 from . import __version__
 
@@ -18,7 +18,7 @@ class App:
         self.case = None
         self.busy = False
         self.cancel = threading.Event()
-        self.messages = queue.Queue()
+        self.messages: queue.Queue = queue.Queue()
         self.networks = []
         self.findings = []
         self.events = []
@@ -331,6 +331,16 @@ class App:
     def rule_config(self):
         return {"failure_threshold": int(self.failure.get()), "fanout_threshold": int(self.fanout.get()), "indicators": [str(n) for n in self.networks], "windows_rules": True}
 
+    def custom_rules(self, config):
+        """Extra rules from windows-rules.json beside the app; None after showing why it is invalid."""
+        try:
+            rules = load_custom_rules()
+        except ValueError as exc:
+            messagebox.showerror("Invalid windows-rules.json", str(exc))
+            return None
+        config["custom_rules"] = [rule[0] for rule in rules]
+        return rules
+
     def analyze(self):
         if not self.require_case():
             return
@@ -339,11 +349,14 @@ class App:
         except ValueError:
             messagebox.showerror("Invalid thresholds", "Thresholds must be whole numbers, at least two.")
             return
+        custom = self.custom_rules(config)
+        if custom is None:
+            return
         def done(rows):
             self.findings = rows
             self.fill(self.finding_tree, rows)
             self.status.set(f"{len(rows)} findings. Review Findings; indicators require validation.")
-        self.work(lambda: analyze(self.case, self.networks, config["failure_threshold"], config["fanout_threshold"]), done)
+        self.work(lambda: analyze(self.case, self.networks, config["failure_threshold"], config["fanout_threshold"], True, custom), done)
 
     def search(self):
         if not self.require_case():
@@ -421,7 +434,7 @@ class App:
             self.work(lambda: export_csv(self.case, path, **self.active_filters), lambda n: self.status.set(f"Exported {n:,} matching events to {path}"))
 
     def safe_output(self, path):
-        if Path(path).resolve() == Path(self.case).resolve():
+        if Path(path).resolve() == Path(self.case).resolve():  # type: ignore[arg-type]
             messagebox.showerror("Choose another path", "An export cannot overwrite the open case.")
             return False
         return True
@@ -434,10 +447,13 @@ class App:
         except ValueError:
             messagebox.showerror("Invalid thresholds", "Thresholds must be whole numbers.")
             return
+        custom = self.custom_rules(config)
+        if custom is None:
+            return
         path = filedialog.asksaveasfilename(defaultextension=".html", filetypes=[("HTML report", "*.html"), ("JSON report", "*.json")])
         if path and self.safe_output(path):
             def task():
-                rows = analyze(self.case, self.networks, config["failure_threshold"], config["fanout_threshold"])
+                rows = analyze(self.case, self.networks, config["failure_threshold"], config["fanout_threshold"], True, custom)
                 export_report(self.case, path, rows, config)
                 return rows
             def done(rows):

@@ -124,7 +124,7 @@ class WindowsFormatTests(unittest.TestCase):
         db = sqlite3.connect(old)
         try:
             self.assertEqual(db.execute('SELECT raw,provider FROM events').fetchone(), ('preserve-me', ''))
-            self.assertEqual(db.execute('SELECT value FROM metadata').fetchone()[0], '3')
+            self.assertEqual(db.execute("SELECT value FROM metadata WHERE key='schema_version'").fetchone()[0], '4')
             self.assertIn('annotations', [r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")])
             self.assertIn('decode_warnings', [r[1] for r in db.execute('PRAGMA table_info(imports)')])
         finally:

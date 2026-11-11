@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0 - 2026-11-11
+
+- Indexed free-text search: a SQLite FTS5 trigram index over host, user, action, message, provider and channel. Results are the same case-insensitive substring matches as before. Terms under three characters, and SQLite builds without the trigram tokenizer, fall back to the table scan. Expect a larger case file and a slower import in exchange (about 45 and 25 percent in a 300,000-event test).
+- `AUTH_BURST` and `DEST_FANOUT` use 5-minute sliding windows instead of fixed UTC buckets, so a burst across a bucket edge is no longer missed. Each source IP now gets one finding, for its busiest window, where 0.4 listed one finding per bucket.
+- Custom Windows event rules from JSON: `windows-rules.json` beside the application, or `report --rules path.json`. See `samples/windows-rules.example.json`.
+- Case schema 4 adds the search index; 0.1 to 0.4 cases migrate automatically on open and are indexed once.
+- Development: ruff and mypy run in CI, build tools are installed with `--require-hashes`, actions are pinned by commit, Dependabot watches pip and actions, and release archives carry a build provenance attestation.
+
 ## 0.4.0 - 2026-11-09
 
 - Windows event rules per host: log cleared (1102/104), new service (7045/4697), member added to a security-enabled group (4728/4732/4756), account created (4720) and scheduled task created (4698). Event ID and exact provider must both match; `--no-windows-rules` disables them.
